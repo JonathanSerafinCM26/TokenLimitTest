@@ -7,4 +7,4 @@ Route::get('/', function () {
     return view('welcome');
 });
 
-Route::get('/test-token-limit', [GeminiTokenTestController::class, 'testTokenLimit']);
+Route::get('/test-gemini-tokens', [GeminiTokenTestController::class, 'testTokenLimits']);

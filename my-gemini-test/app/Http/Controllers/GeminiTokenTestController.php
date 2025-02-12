@@ -3,67 +3,99 @@
 namespace App\Http\Controllers;
 
 use App\Models\User;
-use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
 use LiteOpenSource\GeminiLiteLaravel\Src\Facades\Gemini;
 use LiteOpenSource\GeminiLiteLaravel\Src\Facades\GeminiTokenCount;
-use Illuminate\Support\Facades\Hash;
 
 class GeminiTokenTestController extends Controller
 {
-    public function testTokenLimit()
+    public function testTokenLimits()
     {
-        // Crear usuario de prueba
-        $testUser = User::create([
-            'name' => 'Test User',
-            'email' => 'test_' . time() . '@example.com',
-            'password' => Hash::make('password'),
-        ]);
+        try {
+            // Limpiar usuarios de prueba anteriores
+            User::where('email', 'like', '%@test.com')->delete();
 
-        // Asignar rol con límites
-        $testUser->assignGeminiRole('limited_user');
-
-        // Array para almacenar resultados
-        $results = [];
-
-        // Test 1: Verificar estado inicial
-        $results['initial_state'] = [
-            'can_make_request' => $testUser->canMakeRequestToGemini(),
-            'is_active' => $testUser->isActiveInGemini()
-        ];
-
-        // Test 2: Probar conteo de tokens
-        $testPrompt = "Escribe una historia corta sobre un gato espacial";
-        $tokenCount = GeminiTokenCount::coutTextTokens($testPrompt);
-        $results['token_count'] = $tokenCount;
-
-        // Test 3: Hacer una solicitud y actualizar uso
-        if ($testUser->canMakeRequestToGemini()) {
-            $gemini = Gemini::newChat();
-            $response = $gemini->newPrompt($testPrompt);
-            $testUser->updateUsageTracking($tokenCount);
+            // 1. Crear usuarios de prueba con diferentes roles y emails únicos
+            $timestamp = now()->timestamp;
+            $limitedUser = User::create([
+                'name' => 'Usuario Limitado',
+                'email' => "limited_{$timestamp}@test.com",
+                'password' => Hash::make('password123')
+            ]);
             
-            // Registrar la solicitud
-            $testUser->storeGeminiRequest(
-                requestType: "Test",
-                consumedTokens: $tokenCount,
-                requestSuccessful: true,
-                requestData: ["request" => $testPrompt],
-                responseData: ["response" => $response]
-            );
+            $premiumUser = User::create([
+                'name' => 'Usuario Premium',
+                'email' => "premium_{$timestamp}@test.com",
+                'password' => Hash::make('password123')
+            ]);
 
-            $results['request_made'] = true;
-            $results['response_received'] = !empty($response);
-        } else {
-            $results['request_made'] = false;
-            $results['error'] = 'Usuario no autorizado para hacer solicitudes';
+            // 2. Asignar roles
+            $limitedUser->assignGeminiRole('limited_user');
+            $premiumUser->assignGeminiRole('premium_user');
+
+            // 3. Probar el conteo de tokens
+            $testPrompt = "Escribe una historia corta sobre un bosque mágico";
+            $tokens = GeminiTokenCount::coutTextTokens($testPrompt);
+
+            // 4. Probar permisos de solicitud
+            $limitedUserStatus = [
+                'can_request' => $limitedUser->canMakeRequestToGemini(),
+                'is_active' => $limitedUser->isActiveInGemini()
+            ];
+
+            $premiumUserStatus = [
+                'can_request' => $premiumUser->canMakeRequestToGemini(),
+                'is_active' => $premiumUser->isActiveInGemini()
+            ];
+
+            // 5. Probar solicitud real a Gemini y seguimiento de tokens
+            $responses = [];
+            
+            if ($limitedUser->canMakeRequestToGemini()) {
+                $gemini = Gemini::newChat();
+                $response = $gemini->newPrompt($testPrompt);
+                $limitedUser->updateUsageTracking($tokens);
+                $limitedUser->storeGeminiRequest(
+                    requestType: "Test Story", 
+                    consumedTokens: $tokens, 
+                    requestSuccessful: true, 
+                    requestData: ["prompt" => $testPrompt],
+                    responseData: ["response" => $response]
+                );
+                
+                $responses['limited_user_response'] = $response;
+            }
+
+            // 6. Retornar resultados de prueba detallados
+            return response()->json([
+                'success' => true,
+                'test_results' => [
+                    'users_created' => [
+                        'limited_user' => [
+                            'id' => $limitedUser->id,
+                            'name' => $limitedUser->name,
+                            'email' => $limitedUser->email,
+                            'status' => $limitedUserStatus
+                        ],
+                        'premium_user' => [
+                            'id' => $premiumUser->id,
+                            'name' => $premiumUser->name,
+                            'email' => $premiumUser->email,
+                            'status' => $premiumUserStatus
+                        ]
+                    ],
+                    'test_prompt' => $testPrompt,
+                    'token_count' => $tokens,
+                    'gemini_responses' => $responses
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error durante la prueba: ' . $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ], 500);
         }
-
-        // Test 4: Verificar estado después de la solicitud
-        $results['final_state'] = [
-            'can_make_request' => $testUser->canMakeRequestToGemini(),
-            'is_active' => $testUser->isActiveInGemini()
-        ];
-
-        return response()->json($results);
     }
 }
